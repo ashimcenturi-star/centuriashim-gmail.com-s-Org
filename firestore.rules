@@ -1,0 +1,436 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidPhoneKey(key) {
+      return key is string && key.size() >= 7 && key.size() <= 15 && key.matches('^[0-9]{7,15}$');
+    }
+
+    function isValidHexHash(hash) {
+      return hash is string && hash.size() == 64 && hash.matches('^[a-f0-9]{64}$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'ashimcenturi@gmail.com';
+    }
+
+    // --- Validation Helpers ---
+    function isValidMenuItem(data) {
+      return data.keys().hasAll(['name', 'description', 'price', 'category', 'available', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['name', 'description', 'price', 'category', 'available', 'imageUrl', 'sortOrder', 'createdAt', 'updatedAt'])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.description is string && data.description.size() <= 400
+        && (data.price is int || data.price is float) && data.price > 0 && data.price <= 100000
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 60
+        && data.available is bool
+        && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 500))
+        && (!('sortOrder' in data) || ((data.sortOrder is int || data.sortOrder is float) && data.sortOrder >= 0 && data.sortOrder <= 10000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCategory(data) {
+      return data.keys().hasAll(['name', 'sortOrder', 'createdAt'])
+        && data.keys().hasOnly(['name', 'sortOrder', 'createdAt'])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 60
+        && (data.sortOrder is int || data.sortOrder is float) && data.sortOrder >= 0 && data.sortOrder <= 1000
+        && data.createdAt is timestamp;
+    }
+
+    function isValidTable(data) {
+      return data.keys().hasAll(['tableNumber', 'active', 'createdAt'])
+        && data.keys().hasOnly(['tableNumber', 'label', 'active', 'createdAt'])
+        && data.tableNumber is string && data.tableNumber.size() >= 1 && data.tableNumber.size() <= 20 && data.tableNumber.matches('^[a-zA-Z0-9\\-]+$')
+        && (!('label' in data) || (data.label is string && data.label.size() <= 60))
+        && data.active is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidOrderStatusValue(status) {
+      return status in ['New', 'Accepted', 'Preparing', 'Ready', 'Completed', 'Cancelled'];
+    }
+
+    function isValidOrderItemMap(item) {
+      return item is map
+        && item.keys().hasAll(['itemId', 'name', 'price', 'quantity'])
+        && item.keys().hasOnly(['itemId', 'name', 'price', 'quantity'])
+        && isValidId(item.itemId)
+        && item.name is string && item.name.size() >= 1 && item.name.size() <= 100
+        && (item.price is int || item.price is float) && item.price > 0 && item.price <= 100000
+        && item.quantity is int && item.quantity >= 1 && item.quantity <= 99;
+    }
+
+    function isValidOrderShape(data) {
+      return data.keys().hasAll([
+          'orderNumber', 'tableNumber', 'customerName', 'whatsappNumber',
+          'specialInstructions', 'items', 'totalAmount', 'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'orderNumber', 'tableNumber', 'customerName', 'whatsappNumber',
+          'specialInstructions', 'items', 'totalAmount', 'status', 'stampAwarded', 'createdAt', 'updatedAt'
+        ])
+        && data.orderNumber is string && data.orderNumber.size() >= 3 && data.orderNumber.size() <= 24 && data.orderNumber.matches('^MB-[A-Z0-9\\-]+$')
+        && data.tableNumber is string && data.tableNumber.size() >= 1 && data.tableNumber.size() <= 20 && data.tableNumber.matches('^[a-zA-Z0-9\\-]+$')
+        && data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 80
+        && data.whatsappNumber is string && data.whatsappNumber.size() >= 7 && data.whatsappNumber.size() <= 20 && data.whatsappNumber.matches('^[0-9+\\-() ]{7,20}$')
+        && data.specialInstructions is string && data.specialInstructions.size() <= 300
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 7
+        && isValidOrderItemMap(data.items[0])
+        && (data.totalAmount is int || data.totalAmount is float) && data.totalAmount > 0 && data.totalAmount <= 500000
+        && isValidOrderStatusValue(data.status)
+        && (!('stampAwarded' in data) || data.stampAwarded is bool)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function matchesCatalogItem(orderItem, menuData) {
+      return menuData.available == true
+        && orderItem.price == menuData.price
+        && orderItem.name == menuData.name;
+    }
+
+    function isValidOrderItemAt(items, idx) {
+      return items.size() <= idx || (
+        isValidOrderItemMap(items[idx])
+        && matchesCatalogItem(
+          items[idx],
+          get(/databases/$(database)/documents/menu_items/$(items[idx].itemId)).data
+        )
+      );
+    }
+
+    function lineTotalAt(items, idx) {
+      return items.size() <= idx ? 0 : items[idx].price * items[idx].quantity;
+    }
+
+    function hasServerVerifiedOrderContent(data) {
+      return get(/databases/$(database)/documents/tables/$(data.tableNumber)).data.active == true
+        && isValidOrderItemAt(data.items, 0)
+        && isValidOrderItemAt(data.items, 1)
+        && isValidOrderItemAt(data.items, 2)
+        && isValidOrderItemAt(data.items, 3)
+        && isValidOrderItemAt(data.items, 4)
+        && isValidOrderItemAt(data.items, 5)
+        && isValidOrderItemAt(data.items, 6)
+        && data.totalAmount == (
+          lineTotalAt(data.items, 0) +
+          lineTotalAt(data.items, 1) +
+          lineTotalAt(data.items, 2) +
+          lineTotalAt(data.items, 3) +
+          lineTotalAt(data.items, 4) +
+          lineTotalAt(data.items, 5) +
+          lineTotalAt(data.items, 6)
+        );
+    }
+
+    function isValidOrderStatusDoc(data) {
+      return data.keys().hasAll(['orderNumber', 'tableNumber', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['orderNumber', 'tableNumber', 'status', 'createdAt', 'updatedAt'])
+        && data.orderNumber is string && data.orderNumber.size() >= 3 && data.orderNumber.size() <= 24 && data.orderNumber.matches('^MB-[A-Z0-9\\-]+$')
+        && data.tableNumber is string && data.tableNumber.size() >= 1 && data.tableNumber.size() <= 20 && data.tableNumber.matches('^[a-zA-Z0-9\\-]+$')
+        && isValidOrderStatusValue(data.status)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLoyaltySettings(data) {
+      return data.keys().hasAll(['requiredStamps', 'rewardDescription', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['requiredStamps', 'rewardDescription', 'updatedBy', 'updatedAt'])
+        && data.requiredStamps is int && data.requiredStamps >= 1 && data.requiredStamps <= 50
+        && data.rewardDescription is string && data.rewardDescription.size() >= 1 && data.rewardDescription.size() <= 200
+        && data.updatedBy is string && data.updatedBy.size() >= 3 && data.updatedBy.size() <= 120
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLoyaltyAccount(data) {
+      return data.keys().hasAll([
+          'phoneKey', 'phoneHash', 'whatsappNumber', 'customerName',
+          'stampsCount', 'totalStampsEarned', 'rewardsRedeemed',
+          'lastAwardedBy', 'lastAwardedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'phoneKey', 'phoneHash', 'whatsappNumber', 'customerName',
+          'stampsCount', 'totalStampsEarned', 'rewardsRedeemed',
+          'lastAwardedBy', 'lastAwardedAt', 'createdAt', 'updatedAt'
+        ])
+        && isValidPhoneKey(data.phoneKey)
+        && isValidHexHash(data.phoneHash)
+        && data.whatsappNumber is string && data.whatsappNumber.size() >= 7 && data.whatsappNumber.size() <= 20
+        && data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 80
+        && data.stampsCount is int && data.stampsCount >= 0 && data.stampsCount <= 1000
+        && data.totalStampsEarned is int && data.totalStampsEarned >= 0 && data.totalStampsEarned <= 10000
+        && data.rewardsRedeemed is int && data.rewardsRedeemed >= 0 && data.rewardsRedeemed <= 1000
+        && data.lastAwardedBy is string && data.lastAwardedBy.size() >= 3 && data.lastAwardedBy.size() <= 120
+        && data.lastAwardedAt is timestamp
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLoyaltyPublic(data) {
+      return data.keys().hasAll(['stampsCount', 'totalStampsEarned', 'rewardsRedeemed', 'updatedAt'])
+        && data.keys().hasOnly(['stampsCount', 'totalStampsEarned', 'rewardsRedeemed', 'updatedAt'])
+        && data.stampsCount is int && data.stampsCount >= 0 && data.stampsCount <= 1000
+        && data.totalStampsEarned is int && data.totalStampsEarned >= 0 && data.totalStampsEarned <= 10000
+        && data.rewardsRedeemed is int && data.rewardsRedeemed >= 0 && data.rewardsRedeemed <= 1000
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLoyaltyLedgerEntry(data) {
+      return data.keys().hasAll([
+          'phoneKey', 'customerName', 'type', 'delta',
+          'orderId', 'orderNumber', 'note', 'awardedBy', 'awardedAt'
+        ])
+        && data.keys().hasOnly([
+          'phoneKey', 'customerName', 'type', 'delta',
+          'orderId', 'orderNumber', 'note', 'awardedBy', 'awardedAt'
+        ])
+        && isValidPhoneKey(data.phoneKey)
+        && data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 80
+        && data.type in ['order_award', 'manual_add', 'reward_redeem']
+        && data.delta is int && data.delta >= -50 && data.delta <= 20 && data.delta != 0
+        && data.orderId is string && data.orderId.size() <= 128
+        && data.orderNumber is string && data.orderNumber.size() <= 24
+        && data.note is string && data.note.size() <= 200
+        && data.awardedBy is string && data.awardedBy.size() >= 3 && data.awardedBy.size() <= 120
+        && data.awardedAt is timestamp;
+    }
+
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['email', 'role', 'createdAt'])
+        && data.keys().hasOnly(['email', 'role', 'createdAt'])
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
+        && data.role == 'admin'
+        && data.createdAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    match /menu_items/{itemId} {
+      allow get: if isValidId(itemId);
+      allow list: if true;
+      allow create: if isBootstrappedAdmin()
+        && isValidId(itemId)
+        && isValidMenuItem(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isBootstrappedAdmin()
+        && isValidId(itemId)
+        && isValidMenuItem(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'description', 'price', 'category', 'available', 'imageUrl', 'sortOrder', 'updatedAt'
+        ]);
+      allow delete: if isBootstrappedAdmin() && isValidId(itemId);
+    }
+
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId);
+      allow list: if true;
+      allow create: if isBootstrappedAdmin()
+        && isValidId(categoryId)
+        && isValidCategory(incoming())
+        && incoming().createdAt == request.time;
+      allow update: if isBootstrappedAdmin()
+        && isValidId(categoryId)
+        && isValidCategory(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'sortOrder']);
+      allow delete: if isBootstrappedAdmin() && isValidId(categoryId);
+    }
+
+    match /tables/{tableId} {
+      allow get: if isValidId(tableId);
+      allow list: if true;
+      allow create: if isBootstrappedAdmin()
+        && isValidId(tableId)
+        && isValidTable(incoming())
+        && tableId == incoming().tableNumber
+        && incoming().createdAt == request.time;
+      allow update: if isBootstrappedAdmin()
+        && isValidId(tableId)
+        && isValidTable(incoming())
+        && incoming().tableNumber == existing().tableNumber
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['label', 'active']);
+      allow delete: if isBootstrappedAdmin() && isValidId(tableId);
+    }
+
+    match /orders/{orderId} {
+      // Strictly admin-only read/list because orders contain customer PII
+      allow get: if isBootstrappedAdmin() && isValidId(orderId);
+      allow list: if isBootstrappedAdmin();
+
+      // Dine-in customers create an order atomically paired with a PII-free order_status doc,
+      // with server-side validation of active tableNumber, menu prices, availability, and totalAmount
+      allow create: if isValidId(orderId)
+        && isValidOrderShape(incoming())
+        && incoming().status == 'New'
+        && (!('stampAwarded' in incoming()) || incoming().stampAwarded == false)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && hasServerVerifiedOrderContent(incoming())
+        && getAfter(/databases/$(database)/documents/order_status/$(orderId)).data.orderNumber == incoming().orderNumber
+        && getAfter(/databases/$(database)/documents/order_status/$(orderId)).data.tableNumber == incoming().tableNumber
+        && getAfter(/databases/$(database)/documents/order_status/$(orderId)).data.status == 'New';
+
+      // Admins can update order status OR mark stampAwarded once (all customer & item fields immutable)
+      allow update: if isBootstrappedAdmin()
+        && isValidId(orderId)
+        && isValidOrderShape(incoming())
+        && incoming().orderNumber == existing().orderNumber
+        && incoming().tableNumber == existing().tableNumber
+        && incoming().customerName == existing().customerName
+        && incoming().whatsappNumber == existing().whatsappNumber
+        && incoming().specialInstructions == existing().specialInstructions
+        && incoming().items == existing().items
+        && incoming().totalAmount == existing().totalAmount
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          || (
+            incoming().diff(existing()).affectedKeys().hasOnly(['stampAwarded', 'updatedAt'])
+            && (!('stampAwarded' in existing()) || existing().stampAwarded == false)
+            && incoming().stampAwarded == true
+            && existsAfter(/databases/$(database)/documents/loyalty_ledger/$('order_' + orderId))
+          )
+        );
+
+      allow delete: if isBootstrappedAdmin() && isValidId(orderId);
+    }
+
+    match /order_status/{orderId} {
+      // PII-free single-document lookup by orderId only; never listable
+      allow get: if isValidId(orderId);
+      allow list: if false;
+
+      allow create: if isValidId(orderId)
+        && isValidOrderStatusDoc(incoming())
+        && incoming().status == 'New'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/orders/$(orderId));
+
+      allow update: if isBootstrappedAdmin()
+        && isValidId(orderId)
+        && isValidOrderStatusDoc(incoming())
+        && incoming().orderNumber == existing().orderNumber
+        && incoming().tableNumber == existing().tableNumber
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+
+      allow delete: if isBootstrappedAdmin() && isValidId(orderId);
+    }
+
+    match /settings/{settingId} {
+      allow get: if settingId == 'loyalty';
+      allow list: if false;
+      allow create, update: if isBootstrappedAdmin()
+        && settingId == 'loyalty'
+        && isValidLoyaltySettings(incoming())
+        && incoming().updatedBy == request.auth.token.email
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /loyalty_accounts/{phoneKey} {
+      // Strictly admin-only read/write to protect customer WhatsApp numbers and names
+      allow get: if isBootstrappedAdmin() && isValidPhoneKey(phoneKey);
+      allow list: if isBootstrappedAdmin();
+      allow create: if isBootstrappedAdmin()
+        && isValidPhoneKey(phoneKey)
+        && isValidLoyaltyAccount(incoming())
+        && incoming().phoneKey == phoneKey
+        && incoming().lastAwardedBy == request.auth.token.email
+        && incoming().lastAwardedAt == request.time
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/loyalty_public/$(incoming().phoneHash));
+      allow update: if isBootstrappedAdmin()
+        && isValidPhoneKey(phoneKey)
+        && isValidLoyaltyAccount(incoming())
+        && incoming().phoneKey == existing().phoneKey
+        && incoming().phoneHash == existing().phoneHash
+        && incoming().createdAt == existing().createdAt
+        && incoming().lastAwardedBy == request.auth.token.email
+        && incoming().lastAwardedAt == request.time
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'customerName', 'whatsappNumber', 'stampsCount', 'totalStampsEarned',
+          'rewardsRedeemed', 'lastAwardedBy', 'lastAwardedAt', 'updatedAt'
+        ])
+        && existsAfter(/databases/$(database)/documents/loyalty_public/$(incoming().phoneHash));
+      allow delete: if false;
+    }
+
+    match /loyalty_public/{phoneHash} {
+      // PII-free single-document lookup by SHA-256 hash of WhatsApp number; never listable
+      allow get: if isValidHexHash(phoneHash);
+      allow list: if false;
+      allow create, update: if isBootstrappedAdmin()
+        && isValidHexHash(phoneHash)
+        && isValidLoyaltyPublic(incoming())
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /loyalty_ledger/{entryId} {
+      // Immutable audit log of who awarded each stamp and when; order-based awards use deterministic ID 'order_' + orderId to block duplicates
+      allow get: if isBootstrappedAdmin() && isValidId(entryId);
+      allow list: if isBootstrappedAdmin();
+      allow create: if isBootstrappedAdmin()
+        && isValidId(entryId)
+        && isValidLoyaltyLedgerEntry(incoming())
+        && incoming().awardedBy == request.auth.token.email
+        && incoming().awardedAt == request.time
+        && (
+          incoming().type != 'order_award'
+          || (isValidId(incoming().orderId) && entryId == 'order_' + incoming().orderId)
+        );
+      allow update, delete: if false;
+    }
+
+    match /admins/{adminId} {
+      allow get: if isBootstrappedAdmin() && isValidId(adminId);
+      allow list: if isBootstrappedAdmin();
+      allow create: if isBootstrappedAdmin()
+        && isValidId(adminId)
+        && isValidAdminUser(incoming())
+        && incoming().createdAt == request.time;
+      allow update: if isBootstrappedAdmin()
+        && isValidId(adminId)
+        && isValidAdminUser(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'role']);
+      allow delete: if isBootstrappedAdmin() && isValidId(adminId);
+    }
+  }
+}

@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-display: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --font-body: 'DM Sans', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --bg-cream: #FAF6F0;
+    --bg-cream-card: #FFFFFF;
+    --ink-charcoal: #1A1715;
+    --accent-orange: #D95D1E;
+    --accent-red: #B91C1C;
+  }
+
+  body {
+    font-family: var(--font-body);
+    color: var(--ink-charcoal);
+    background-color: var(--bg-cream);
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-mono-tabular {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  .qr-print-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #d4d4d8 !important;
+  }
+}

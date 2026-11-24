@@ -1,0 +1,432 @@
+{
+  "entities": {
+    "MenuItem": {
+      "title": "MenuItem",
+      "description": "A food or beverage item on the Modern Bhatti digital menu.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name of the dish or drink",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "description": {
+          "type": "string",
+          "description": "Short description of ingredients or preparation",
+          "minLength": 0,
+          "maxLength": 400
+        },
+        "price": {
+          "type": "number",
+          "description": "Authoritative price in NPR (Nepalese Rupees)"
+        },
+        "category": {
+          "type": "string",
+          "description": "Menu category name",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "available": {
+          "type": "boolean",
+          "description": "Whether the item is currently available to order"
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Optional real photo URL added by restaurant staff",
+          "maxLength": 500
+        },
+        "sortOrder": {
+          "type": "number",
+          "description": "Display ordering priority within category"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last update timestamp"
+        }
+      },
+      "required": ["name", "description", "price", "category", "available", "createdAt", "updatedAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Menu category used to organize dishes.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Category display name",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "sortOrder": {
+          "type": "number",
+          "description": "Order in which categories appear"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        }
+      },
+      "required": ["name", "sortOrder", "createdAt"]
+    },
+    "RestaurantTable": {
+      "title": "RestaurantTable",
+      "description": "A physical dining table keyed by its tableNumber for server-side QR validation.",
+      "type": "object",
+      "properties": {
+        "tableNumber": {
+          "type": "string",
+          "description": "Unique table identifier used as doc ID and QR query param (e.g. 01, 04)",
+          "minLength": 1,
+          "maxLength": 20,
+          "pattern": "^[a-zA-Z0-9\\-]+$"
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional seating area note",
+          "maxLength": 60
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether the table is active for QR ordering"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        }
+      },
+      "required": ["tableNumber", "active", "createdAt"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A dine-in customer order containing customer contact PII and server-verified ordered dishes.",
+      "type": "object",
+      "properties": {
+        "orderNumber": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^MB-[A-Z0-9\\-]+$"
+        },
+        "tableNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "pattern": "^[a-zA-Z0-9\\-]+$"
+        },
+        "customerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "whatsappNumber": {
+          "type": "string",
+          "minLength": 7,
+          "maxLength": 20,
+          "pattern": "^[0-9+\\-() ]{7,20}$"
+        },
+        "specialInstructions": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "items": {
+          "type": "array",
+          "description": "Ordered menu items (1 to 7 distinct items per order, quantity 1-99 each)"
+        },
+        "totalAmount": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["New", "Accepted", "Preparing", "Ready", "Completed", "Cancelled"]
+        },
+        "stampAwarded": {
+          "type": "boolean",
+          "description": "Whether a loyalty stamp has been awarded for this order"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "orderNumber",
+        "tableNumber",
+        "customerName",
+        "whatsappNumber",
+        "specialInstructions",
+        "items",
+        "totalAmount",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "OrderStatus": {
+      "title": "OrderStatus",
+      "description": "PII-free public order progress record mirrored atomically with Order.",
+      "type": "object",
+      "properties": {
+        "orderNumber": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^MB-[A-Z0-9\\-]+$"
+        },
+        "tableNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "pattern": "^[a-zA-Z0-9\\-]+$"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["New", "Accepted", "Preparing", "Ready", "Completed", "Cancelled"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["orderNumber", "tableNumber", "status", "createdAt", "updatedAt"]
+    },
+    "LoyaltySettings": {
+      "title": "LoyaltySettings",
+      "description": "Admin-configurable loyalty program rules.",
+      "type": "object",
+      "properties": {
+        "requiredStamps": {
+          "type": "number",
+          "description": "Number of stamps needed to earn a reward (1-50)"
+        },
+        "rewardDescription": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "updatedBy": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["requiredStamps", "rewardDescription", "updatedBy", "updatedAt"]
+    },
+    "LoyaltyAccount": {
+      "title": "LoyaltyAccount",
+      "description": "Admin-only customer loyalty account keyed by normalized WhatsApp digits.",
+      "type": "object",
+      "properties": {
+        "phoneKey": {
+          "type": "string",
+          "minLength": 7,
+          "maxLength": 15,
+          "pattern": "^[0-9]{7,15}$"
+        },
+        "phoneHash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "whatsappNumber": {
+          "type": "string",
+          "minLength": 7,
+          "maxLength": 20
+        },
+        "customerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "stampsCount": {
+          "type": "number"
+        },
+        "totalStampsEarned": {
+          "type": "number"
+        },
+        "rewardsRedeemed": {
+          "type": "number"
+        },
+        "lastAwardedBy": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "lastAwardedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "phoneKey",
+        "phoneHash",
+        "whatsappNumber",
+        "customerName",
+        "stampsCount",
+        "totalStampsEarned",
+        "rewardsRedeemed",
+        "lastAwardedBy",
+        "lastAwardedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LoyaltyPublic": {
+      "title": "LoyaltyPublic",
+      "description": "PII-free loyalty progress document keyed by SHA-256 hash of normalized WhatsApp number.",
+      "type": "object",
+      "properties": {
+        "stampsCount": {
+          "type": "number"
+        },
+        "totalStampsEarned": {
+          "type": "number"
+        },
+        "rewardsRedeemed": {
+          "type": "number"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["stampsCount", "totalStampsEarned", "rewardsRedeemed", "updatedAt"]
+    },
+    "LoyaltyLedgerEntry": {
+      "title": "LoyaltyLedgerEntry",
+      "description": "Immutable audit log entry recording every stamp award or redemption.",
+      "type": "object",
+      "properties": {
+        "phoneKey": {
+          "type": "string",
+          "minLength": 7,
+          "maxLength": 15,
+          "pattern": "^[0-9]{7,15}$"
+        },
+        "customerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "type": {
+          "type": "string",
+          "enum": ["order_award", "manual_add", "reward_redeem"]
+        },
+        "delta": {
+          "type": "number"
+        },
+        "orderId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "orderNumber": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "awardedBy": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "awardedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["phoneKey", "customerName", "type", "delta", "orderId", "orderNumber", "note", "awardedBy", "awardedAt"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized Modern Bhatti staff admin record.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 120
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["email", "role", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/menu_items/{itemId}": {
+      "schema": { "$ref": "#/entities/MenuItem" },
+      "description": "Restaurant food and drink catalog items."
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "Food categories for menu organization."
+    },
+    "/tables/{tableId}": {
+      "schema": { "$ref": "#/entities/RestaurantTable" },
+      "description": "Configured dining tables keyed by tableNumber for QR validation."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Customer orders containing PII, readable only by verified admins."
+    },
+    "/order_status/{orderId}": {
+      "schema": { "$ref": "#/entities/OrderStatus" },
+      "description": "PII-free live order status tracker readable by single-doc get only."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/LoyaltySettings" },
+      "description": "Publicly readable restaurant loyalty configuration."
+    },
+    "/loyalty_accounts/{phoneKey}": {
+      "schema": { "$ref": "#/entities/LoyaltyAccount" },
+      "description": "Admin-only customer loyalty accounts linked to WhatsApp number."
+    },
+    "/loyalty_public/{phoneHash}": {
+      "schema": { "$ref": "#/entities/LoyaltyPublic" },
+      "description": "PII-free hashed loyalty progress readable by single-doc get only."
+    },
+    "/loyalty_ledger/{entryId}": {
+      "schema": { "$ref": "#/entities/LoyaltyLedgerEntry" },
+      "description": "Immutable admin audit log of who awarded each loyalty stamp and when."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Admin access registry."
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Modern Bhatti — QR Ordering",
+  "description": "Mobile-friendly QR code table ordering, live kitchen order dashboard, menu management, and table QR generator for Modern Bhatti, Machhapokhari, Kathmandu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
